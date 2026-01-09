@@ -161,12 +161,15 @@ void build_finger_table() {
      *   - inelul este static, deci finger table-ul este static
      *   - este parte OBLIGATORIE a temei
      ******************************************************/
+    // intrarile din tabela fingers (de la 0 la 3)
     for (int i = 0; i < M; ++i) {
-        // start = (id + 2^i) % (2^m)
+        // calculam pozitia de start dupa formula start = (id + 2^i) % (2^m)
         int start = (self.id + (1 << i)) % RING_SIZE;
+
+        // salvam pozitia calculata in structura finger
         self.finger[i].start = start;
 
-        // gasim succesorul pentru start
+        // gasim nodul existent care este responsabil pentru acea pozitie
         self.finger[i].node = find_successor_simple(start);
     }
 }
@@ -194,13 +197,15 @@ int closest_preceding_finger(int key) {
      ******************************************************/
     // iteram de la cel mai mare finder (M - 1) pana la 0
     for (int i = M - 1; i >= 0; --i) {
+        // extragem id-ul nodului salvat in finger-ul curent
         int finger_node = self.finger[i].node;
-        if (in_interval(finger_node, self.id, key)) {
-            if (finger_node != self.id && finger_node != key) {
-                return finger_node;
-            }
+
+        // verificam daca se afla in intervalul (self, key)
+        if (in_interval(finger_node, self.id, key) && finger_node != key && finger_node != self.id) {
+            return finger_node;
         }
     }
+    // daca niciun finger nu e bun, returnam succesorul direct
     return self.successor;   // fallback
 }
 
@@ -230,16 +235,16 @@ void handle_lookup_request(LookupMsg *msg) {
         msg->path[msg->path_len] = self.id;
         msg->path_len++;
      }
+     // actualizam id-ul nodului curent in mesaj
      msg->current_id = self.id;
 
      // verificam responsabilitatea succesorului
      int responsible = 0;
-     if (self.id == self.successor) {
-        responsible = 1; // un singur nod e responsabil de tot
-     } else if (in_interval(msg->key, self.id, self.successor)) {
+     if (self.id == self.successor || in_interval(msg->key, self.id, self.successor)) {
         responsible = 1;
      }
 
+     // daca am gasit unde trebuie sa ajunga cheia (la succesorul meu)
      if (responsible) {
         // succesorul este responsabil
         // adaugam succesorul in path
@@ -256,7 +261,7 @@ void handle_lookup_request(LookupMsg *msg) {
         int next_hop_id = closest_preceding_finger(msg->key);
         int next_hop_rank = rank_from_id(next_hop_id);
 
-        // trimitem cererea mai departe
+        // trimitem cererea mai departe la acel nod
         MPI_Send(msg, sizeof(LookupMsg), MPI_BYTE, next_hop_rank, TAG_LOOKUP_REQ, MPI_COMM_WORLD);
      }
 }
@@ -308,9 +313,12 @@ int main(int argc, char **argv) {
      *       - trimiteți un mesaj de tip TAG_LOOKUP_REQ către propriul rank
      ************************************************************/
     
+    // parcurgem toate cheile citite din fisierul de intrare
     for (int i = 0; i < nr_lookups; ++i) {
         LookupMsg msg;
+        // initiatorul sunt eu (self.id)
         msg.initiator_id = self.id;
+        // procesarea incepe de la mine
         msg.current_id = self.id;
         msg.key = lookups[i];
         msg.path_len = 0; // traseul este initializat ca fiind gol
@@ -340,11 +348,13 @@ int main(int argc, char **argv) {
         MPI_Status status;
         LookupMsg msg;
 
+        // asteptam orice mesaj de la orice sursa
         MPI_Recv(&msg, sizeof(LookupMsg), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         
         switch (status.MPI_TAG)
         {
         case TAG_LOOKUP_REQ:
+            // am primit o cerere de rutare
             handle_lookup_request(&msg);
             break;
         
@@ -358,7 +368,7 @@ int main(int argc, char **argv) {
                 }
             }
             printf("\n");
-
+            
             completed_lookups++;
             break;
         
